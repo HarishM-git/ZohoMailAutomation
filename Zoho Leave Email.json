@@ -1,0 +1,341 @@
+{
+  "name": "Zoho Leave Email",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "On Telegram Message",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -448,
+        96
+      ],
+      "webhookId": "3127b08d-2894-4962-a948-913e5d8f8304",
+      "credentials": {
+        "telegramApi": {
+          "id": "cz5nxuSWZRS3ZeXR",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = ($input.first().json.message?.text || '').trim();\nconst chatId = $input.first().json.message?.chat?.id;\n\nconst firstWordMatch = raw.match(/^(\\S+)/);\nconst firstWord = firstWordMatch ? firstWordMatch[1].toLowerCase() : '';\n\n// =====================================================\n// PERMISSION\n// =====================================================\nfunction permissionFail(error) {\n  return [{ json: { valid: false, type: 'permission', chatId, original: raw, error } }];\n}\n\nif (firstWord === 'permission') {\n  let rest = raw.replace(/^permission\\b/i, '').trim();\n\n  if (!rest) {\n    return permissionFail('Format: permission <time> <reason>. e.g. permission 10.00 AM Health issue');\n  }\n\n  const match = rest.match(/^(\\d{1,2}[:.]\\d{2}\\s*(?:AM|PM|am|pm)?)\\s+(.+)$/);\n\n  if (!match) {\n    return permissionFail('Format: permission <time> <reason>. e.g. permission 10.00 AM Health issue');\n  }\n\n  const time = match[1].trim().toUpperCase();\n  const reason = match[2].trim();\n\n  if (!reason) {\n    return permissionFail('Please include a reason. e.g. permission 10.00 AM Health issue');\n  }\n\n  const now = new Date();\n  const dateStr = [\n    String(now.getDate()).padStart(2, '0'),\n    String(now.getMonth() + 1).padStart(2, '0'),\n    now.getFullYear()\n  ].join('-');\n\n  return [{\n    json: { valid: true, type: 'permission', chatId, original: raw, date: dateStr, time, reason }\n  }];\n}\n\n// =====================================================\n// LEAVE\n// =====================================================\nfunction leaveFail(error) {\n  return [{ json: { valid: false, type: 'leave', dates: [], chatId, original: raw, error } }];\n}\n\nif (firstWord !== 'leave') {\n  return [{\n    json: {\n      valid: false,\n      type: 'unknown',\n      dates: [],\n      chatId,\n      original: raw,\n      error: 'Message must start with \"leave\" or \"permission\".'\n    }\n  }];\n}\n\nlet rest = raw.replace(/^leave\\b/i, '').trim();\nconst leaveText = raw.replace(/^leave\\b/i, '').trim();\n\nif (!rest) {\n  return leaveFail('No date provided.');\n}\n\nconst months = {\n  jan: 1, january: 1,\n  feb: 2, february: 2,\n  mar: 3, march: 3,\n  apr: 4, april: 4,\n  may: 5,\n  jun: 6, june: 6,\n  jul: 7, july: 7,\n  aug: 8, august: 8,\n  sep: 9, sept: 9, september: 9,\n  oct: 10, october: 10,\n  nov: 11, november: 11,\n  dec: 12, december: 12\n};\n\nlet year = null;\nconst yearMatch = rest.match(/(?:^|[\\s,./-])(\\d{4})\\s*$/);\n\nif (yearMatch) {\n  year = Number(yearMatch[1]);\n  rest = rest.slice(0, yearMatch.index).trim();\n}\n\nconst monthRegex = /\\b(january|february|march|april|may|june|july|august|september|sept|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\\b/i;\nconst monthMatch = rest.match(monthRegex);\n\nif (!monthMatch) {\n  return leaveFail('A valid month is required.');\n}\n\nconst monthName = monthMatch[1].toLowerCase();\nconst month = months[monthName];\n\nconst now = new Date();\n\nif (year === null) {\n  const currentYear = now.getFullYear();\n  const currentMonth = now.getMonth() + 1;\n  year = month >= currentMonth ? currentYear : currentYear + 1;\n}\n\nconst dayPart = rest.slice(0, monthMatch.index).trim();\n\nif (!dayPart) {\n  return leaveFail('No day provided.');\n}\n\nconst validSyntax = /^\\s*\\d{1,2}(?:\\s*(?:,|to|-)\\s*\\d{1,2})*(?:\\s*,)?\\s*$/i;\n\nif (!validSyntax.test(dayPart)) {\n  return leaveFail('Invalid day format. Use formats like \"20,21,22\" or \"12 to 16\".');\n}\n\nconst rangeMatch = dayPart.match(/^\\s*(\\d{1,2})\\s*(?:to|-)\\s*(\\d{1,2})\\s*$/i);\nlet dayNumbers = [];\n\nif (rangeMatch) {\n  const startDay = Number(rangeMatch[1]);\n  const endDay = Number(rangeMatch[2]);\n\n  if (startDay < 1 || startDay > 31) return leaveFail(`Invalid start day: ${startDay}.`);\n  if (endDay < 1 || endDay > 31) return leaveFail(`Invalid end day: ${endDay}.`);\n  if (startDay > endDay) return leaveFail('Start day cannot be greater than end day.');\n\n  for (let day = startDay; day <= endDay; day++) {\n    dayNumbers.push(day);\n  }\n} else {\n  dayNumbers = [...dayPart.matchAll(/\\d{1,2}/g)].map(m => Number(m[0]));\n}\n\nconst lastDayOfMonth = new Date(year, month, 0).getDate();\n\nfor (const day of dayNumbers) {\n  if (day < 1 || day > 31) return leaveFail(`Invalid day: ${day}. Day must be between 1 and 31.`);\n  if (day > lastDayOfMonth) return leaveFail(`${day} is not a valid day for ${monthName} ${year}.`);\n}\n\nconst validDates = dayNumbers.map(day => `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);\n\nreturn [{\n  json: { valid: true, type: 'leave', dates: validDates, year, month: monthName, chatId, original: raw, leaveText }\n}];"
+      },
+      "id": "parse-leave",
+      "name": "Parse Leave",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "is-valid",
+      "name": "Is Valid Leave",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -64,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "checkingmail@zohomail.in",
+        "toEmail": "harishdeepakh@gmail.com",
+        "subject": "=Leave | 136370 | Harish M  | {{ $now.toFormat(\"dd/MM/yyyy\") }}",
+        "html": "=Date of leave : {{ $json.leaveText }} <br><br>Reason : Personal Leave<br><br>Thank You!<br><br>Regards<br>Harish M<br>136370",
+        "options": {
+          "appendAttribution": false,
+          "ccEmail": "harishdeepakhofficial@gmail.com,harishdeepakh2@gmail.com"
+        }
+      },
+      "id": "3e40d809-98dc-41e5-acd7-ee6cfb073bd0",
+      "name": "Send Leave Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        304,
+        -80
+      ],
+      "webhookId": "84d6dd34-bec7-4bcf-8200-2b0078179b9d",
+      "credentials": {
+        "smtp": {
+          "id": "AX6NAxgmEinOTIO0",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $(\"Parse Leave\").item.json.chatId }}",
+        "text": "={{ $(\"Parse Leave\").item.json.type === 'permission' ? ('Harish uu Permission email aa sent panitann daa: ' + $(\"Parse Leave\").item.json.time + ' - ' + $(\"Parse Leave\").item.json.reason) : ('Harish uu Leave email aa sent panitann daa: ' + $(\"Parse Leave\").item.json.leaveText) }} 🔥",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "reply-success",
+      "name": "Reply Success",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        32
+      ],
+      "webhookId": "ac5ddf97-19be-4695-9411-01beaf9bd733",
+      "credentials": {
+        "telegramApi": {
+          "id": "cz5nxuSWZRS3ZeXR",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $(\"Parse Leave\").item.json.chatId }}",
+        "text": "=Daii thappa irrukku 🤦 : {{ $json.error }}\n\nFormat pathukoo:\nLeave => leave 3 to 5 Sep 2026\nPermission => permission 10.00 AM Health issue",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "reply-invalid",
+      "name": "Reply Invalid",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        224,
+        336
+      ],
+      "webhookId": "87b218fd-21bc-410a-b182-c8035b0aa226",
+      "credentials": {
+        "telegramApi": {
+          "id": "cz5nxuSWZRS3ZeXR",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "leave",
+                    "id": "187749a8-ad03-4c94-a215-fdb740e80527"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "leave"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.type }}",
+                    "operator": {
+                      "operation": "equals",
+                      "type": "string"
+                    },
+                    "rightValue": "permission",
+                    "id": "3cbe2192-931a-4744-bb2d-4e53d040e1af"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "permission"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0a6f976f-5dbb-42ed-813d-bebe62cf2a3a",
+      "name": "Route By Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        112,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "checkingmail@zohomail.in",
+        "toEmail": "harishdeepakh@gmail.com",
+        "subject": "=Permission | 136370 | Harish M | {{ $now.toFormat(\"dd/MM/yyyy\") }}",
+        "html": "=Date: {{ $json.date }} <br>Time: {{ $json.time }} <br><br>Reason: {{ $json.reason }}<br><br>Thanks & Regards<br>Harish M<br>136370",
+        "options": {
+          "appendAttribution": false,
+          "ccEmail": "harishdeepakhofficial@gmail.com,harishdeepakh2@gmail.com"
+        }
+      },
+      "id": "2dba248d-e726-43da-b946-77f4cf2d0afa",
+      "name": "Send Permission Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        304,
+        176
+      ],
+      "webhookId": "0096641f-c64f-447e-b289-2c5f4a7eb63a",
+      "credentials": {
+        "smtp": {
+          "id": "AX6NAxgmEinOTIO0",
+          "name": "SMTP account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Parse Leave",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Leave": {
+      "main": [
+        [
+          {
+            "node": "Is Valid Leave",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid Leave": {
+      "main": [
+        [
+          {
+            "node": "Route By Type",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reply Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Leave Email": {
+      "main": [
+        [
+          {
+            "node": "Reply Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route By Type": {
+      "main": [
+        [
+          {
+            "node": "Send Leave Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Permission Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Permission Email": {
+      "main": [
+        [
+          {
+            "node": "Reply Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "b95edfa3-ea39-42c3-8bfb-5ea9a0270d68",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "aiBuilderAssisted": true,
+    "builderVariant": "mcp",
+    "instanceId": "78f363ff3c2b89e726d52d5ad20ecad8ca4162f9940269ac9cc9aa1995b8c8df"
+  },
+  "nodeGroups": [],
+  "id": "qq2fAit8NoPIanRF",
+  "tags": []
+}
